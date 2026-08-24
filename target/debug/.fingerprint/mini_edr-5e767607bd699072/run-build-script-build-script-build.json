@@ -1,0 +1,1 @@
+{"rustc":8891013984288978370,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[8185151205291194847,"build_script_build",false,9005594654750474006]],"local":[{"RerunIfChanged":{"output":"debug\\build\\mini_edr-5e767607bd699072\\output","paths":["build.rs"]}}],"rustflags":[],"config":0,"compile_kind":0}
