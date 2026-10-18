@@ -13,36 +13,24 @@ impl TryFrom<RawProcessData> for Process {
     type Error = MapperError;
 
     fn try_from(raw: RawProcessData) -> Result<Self, Self::Error> {
-        let end = raw.exe_file.iter().position(|&b| b == 0).unwrap_or(raw.exe_file.len());
-        let trimmed = &raw.exe_file[..end];
-
-        let name_str = match String::from_utf8(trimmed.to_vec()) {
+        let name_str = match String::from_utf8(raw.exe_file) {
             Ok(value) => value,
             Err(error) => return Err(MapperError::InvalidExeFile(error)),
         };
 
         let command_line_str = match raw.command_line {
             None => None,
-            Some(bytes) => {
-                let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-                let trimmed = &bytes[..end];
-
-                match String::from_utf8(trimmed.to_vec()) {
-                    Ok(value) => Some(value),
-                    Err(error) => return Err(MapperError::InvalidCommandLine(error)),
-                }
-            }
+            Some(bytes) => match String::from_utf8(bytes) {
+                Ok(value) => Some(value),
+                Err(error) => return Err(MapperError::InvalidCommandLine(error)),
+            },
         };
 
         let user_str = match raw.user {
             None => None,
-            Some(bytes) => {
-                let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-                let trimmed = &bytes[..end];
-                match String::from_utf8(trimmed.to_vec()) {
-                    Ok(value) => Some(value),
-                    Err(error) => return Err(MapperError::InvalidUser(error))
-                }
+            Some(bytes) => match String::from_utf8(bytes) {
+                Ok(value) => Some(value),
+                Err(error) => return Err(MapperError::InvalidUser(error)),
             },
         };
 

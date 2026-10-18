@@ -53,10 +53,12 @@ pub fn capture_raw_processes() -> Result<Vec<RawProcessData>, CaptureError> {
 }
 
 fn processentry_to_raw(entry: &PROCESSENTRY32) -> RawProcessData {
-    let mut exe_file: [u8; 260] = [0; 260];
-    for i in 0..260 {
-        exe_file[i] = entry.szExeFile[i] as u8;
-    }
+    let exe_file: Vec<u8> = entry
+        .szExeFile
+        .iter()
+        .map(|&c| c as u8)
+        .take_while(|&b| b != 0)
+        .collect();
 
     RawProcessData {
         pid: entry.th32ProcessID,
