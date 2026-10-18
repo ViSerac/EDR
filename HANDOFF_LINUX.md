@@ -2,7 +2,11 @@
 
 Context file for Claude Code. It covers everything since the egui GUI was finished, plus the plan for the Linux port.
 
-Project root: `C:\Users\Victor\Documents\Funzies\EDR\mini_edr` (Rust 2024 edition, egui/eframe 0.31, chrono, `windows` 0.62).
+Project root (Rust 2024 edition, egui/eframe 0.31, chrono, `windows` 0.62):
+- Windows: `C:\Users\Victor\Documents\Funzies\EDR\mini_edr`
+- Linux: `/home/viserac/EDR/EDR` (Asus notebook, Ubuntu 26.04.1 LTS, kernel 7.0.0)
+
+Note: Claude Code conversation history does **not** sync between the two machines (transcripts are local, in `~/.claude/projects/`). This file is the context carrier — read it at the start of a session, and update it before switching machines.
 
 ---
 
@@ -83,7 +87,13 @@ Key decisions already made:
 
 ## 4. Next steps
 
-**Status (Oct 17, 2026):** Steps 1 to 4 are done. Victor asked Claude to write Step 4, with the explanation given in chat. `cargo check` passes on Windows and for `--target x86_64-unknown-linux-gnu` (tests included). The Linux unit tests have not been run yet, because there is no Rust toolchain in WSL and Docker was not running. Deviation from the plan: the process name is taken from the `(comm)` inside `stat`, not from `/proc/<pid>/comm`. One read gives a consistent view of the process, and there is no trailing `\n` to strip.
+**Status (Oct 18, 2026):** Steps 1 to 5 are done. **The EDR now runs live on Linux and captures processes.** Deviation from the plan: the process name is taken from the `(comm)` inside `stat`, not from `/proc/<pid>/comm`. One read gives a consistent view of the process, and there is no trailing `\n` to strip.
+
+Verified on the Asus notebook (Ubuntu 26.04.1, kernel 7.0.0, cargo 1.97.1), unprivileged (uid 1000):
+- `cargo test`: **8 passed, 0 failed.** The 6 `process_capture` tests (`parses_plain_stat`, `comm_with_spaces_and_parens_cannot_shift_fields`, `rejects_truncated_stat`, `rejects_stat_without_closing_paren`, `parse_pid_accepts_only_digits`, `captures_own_process`) had never been executed before — only cross-checked. They now pass on real hardware.
+- Live run captures the process list successfully.
+
+Earlier: `cargo check` passes on Windows and for `--target x86_64-unknown-linux-gnu`.
 
 ### Step 1 — `Cargo.toml`: gate the `windows` crate (scaffolding)
 Move `windows` out of `[dependencies]`:
@@ -135,13 +145,28 @@ Then the flow: `read_dir("/proc")` -> numeric filter -> per PID, read `stat` (pp
    - `read_link(exe)` permission denied or missing (kernel threads): `path = None`.
    - `stat` malformed (no `)`): skip and log. Never abort: `comm` is attacker-controlled, and aborting would let one crafted process blind the whole EDR.
 4. Kernel threads: keep them for now and decide after measuring churn on the real test machine (`ps -e --no-headers | wc -l` over time). Identification: `ppid == 2` can't be forged from userspace (orphans are reparented to PID 1 or a subreaper, never to kthreadd), but it breaks inside containers (PID namespaces). The unforgeable check is the `PF_KTHREAD` bit (`0x00200000`) in `stat` field 9 (`flags`). A missing `exe` is not a valid signal, because without root `read_link` also fails for other users' processes.
+
+   **Measured (Oct 18, 2026, Asus notebook, idle desktop):** 362 entries in `/proc`, of which **184 are kernel threads (51%)** and 178 are userspace. So half of every snapshot, every diff and every rule evaluation is kernel threads. Still open for Victor to decide, with the trade-off now concrete:
+   - Filtering them out halves the snapshot and removes a class of churn (`kworker/*` threads are created and reaped constantly, which the differ would report as process start/exit events).
+   - Keeping them is the only way the kernel-thread masquerading rule (item 5 below) can ever fire, since it needs to see the real `PF_KTHREAD` processes to compare against. Alternative: filter in the collector but keep the flag, or filter at the rule/GUI layer instead of at capture.
+   - Note this is an idle measurement. Churn over time (the thing the plan asked for) has not been measured yet.
 5. Future Linux rule idea: kernel-thread masquerading (MITRE ATT&CK T1036). Alert when the name looks like a kernel thread (in brackets, e.g. `[kworker/0:2]`) but `PF_KTHREAD` is not set or `ppid != 2`.
 
-### Step 5 — test environment
-Still undecided: Victor's Asus notebook (Ubuntu) or WSL on the Windows PC. Run with `sudo` to see `exe` for all processes.
+### Step 5 — test environment (DONE)
+**Resolved: the Asus notebook** (Ubuntu 26.04.1 LTS, kernel 7.0.0), not WSL. It has cargo/rustc 1.97.1, so the toolchain problem that blocked the Oct 17 test run is gone.
+
+Privilege measurement, unprivileged (uid 1000): only **127 of 362** `/proc/<pid>/exe` links are readable. The other 232 split into the 184 kernel threads (no `exe` at all) and ~48 processes owned by other users (permission denied). Both land as `path = None` per decision 3, which is why that decision matters in practice and not just in theory: without `sudo` the collector is blind to the executable path of roughly two thirds of the system. Run with `sudo` for full visibility.
+
+### Step 6 — Linux network collector (NEXT, learning core: Victor writes it)
+The process collector works, so per the agreed order (processes -> network -> files) network is next. It replaces the stubs in `tcp_capture_linux.rs` / `udp_capture_linux.rs`, which currently return `Vec::new()`.
+
+Parse `/proc/net/tcp`, `tcp6`, `udp`, `udp6`. Things to settle before coding, in the same spirit as Step 4:
+- Addresses are hex and IPv4 is **little-endian** in that file (`0100007F` is `127.0.0.1`), while IPv6 is a different byte grouping. Where does that conversion belong: collector or mapper? Compare with how decision 1 split responsibility ("Raw" = unvalidated bytes, collector strips its own format artifacts).
+- TCP state is a hex code (`01` = ESTABLISHED, `0A` = LISTEN). The Windows collector gets states from `MIB_TCPROW`. Do both platforms map into one domain enum?
+- These files have a header line to skip, and the format has fixed columns but variable whitespace.
+- The owning PID is **not** in these files. There is only an inode, which has to be matched against `/proc/<pid>/fd/*` symlinks (`socket:[12345]`). That is an extra scan, and unprivileged it will hit the same permission wall measured in Step 5 — so expect `pid` to be unknown for most sockets without `sudo`. Compare: on Windows `GetExtendedTcpTable` hands over the PID directly.
 
 ### Later
-- Linux network collector: parse `/proc/net/tcp`, `tcp6`, `udp`, `udp6` (hex parsing, IPv4 byte order, TCP state codes).
 - Linux file collector: `inotify` (crate `inotify` or `libc` bindings), mirroring the `ReadDirectoryChangesW` thread + channel design.
 - **Rules on Linux:** `SuspiciousParentRule` is Windows-specific (`powershell.exe`, `cmd.exe`, `explorer.exe`). It needs per-platform lists (e.g. `bash`/`sh` spawned by a web server or office process). Review `FileThenProcessRule` for Windows path assumptions too.
 - Optional: apply the alert tuning from 3.1 (add `claude.exe`, use pattern matching for updater processes).
