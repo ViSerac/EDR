@@ -1,7 +1,7 @@
 use std::env;
 use std::sync::mpsc::Sender;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 
@@ -20,6 +20,8 @@ use crate::models::tcp_connection::TcpConnection;
 use crate::models::udp_endpoint::UdpEndpoint;
 use crate::rules::file_then_process_rule::FileThenProcessRule;
 use crate::rules::suspicious_parent_rule::SuspiciousParentRule;
+
+const CAPTURE_INTERVAL: Duration = Duration::from_millis(500);
 
 /// The UI side of the channels has been dropped; the capture loop should stop.
 struct UiDisconnected;
@@ -84,6 +86,7 @@ fn run_capture_loop(event_tx: Sender<Event>, alert_tx: Sender<Alert>, ctx: egui:
     ]);
 
     loop {
+        let cycle_start = Instant::now();
         let mut new_data = false;
 
         let file_events = file_monitor.poll_events();
@@ -127,6 +130,10 @@ fn run_capture_loop(event_tx: Sender<Event>, alert_tx: Sender<Alert>, ctx: egui:
             ctx.request_repaint();
         }
 
-        thread::sleep(Duration::from_secs(2));
+        let elapsed = cycle_start.elapsed();
+        match CAPTURE_INTERVAL.checked_sub(elapsed) {
+            Some(remaining) => thread::sleep(remaining),
+            None => eprintln!("Capture cycle took {:?}, longer than the {:?} interval", elapsed, CAPTURE_INTERVAL),
+        }
     }
 }

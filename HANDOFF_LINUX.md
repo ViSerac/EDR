@@ -85,6 +85,13 @@ Key decisions already made:
 - To list processes: `std::fs::read_dir("/proc")`, then keep only entries whose name passes `.chars().all(|c| c.is_ascii_digit())`.
 - Network will come from `/proc/net/{tcp,tcp6,udp,udp6}` (hex addresses, little-endian IPv4). Files will come from `inotify`. Privilege check: `geteuid() == 0` / running with `sudo`.
 
+### 3.5 Capture interval: 2 s down to 500 ms (Oct 18, 2026)
+- `CAPTURE_INTERVAL` in `pipeline.rs` is now 500 ms. The loop sleeps for the interval minus the time the cycle took (fixed cadence) and logs to stderr if a cycle overruns the interval.
+- Measured on the Windows PC (~400 processes, unelevated, release build): process capture about 20 ms per cycle, dominated by the two `OpenProcess` calls per process every cycle (creation time and path). TCP and UDP tables under 1 ms. Elevated it will be somewhat higher, since more processes can be opened.
+- Why 500 ms and not lower: cost grows linearly with frequency (about 6% of one core at 500 ms, 12% at 250 ms, 30% at 100 ms), while the gain against short-lived processes stays small. A 50 ms `whoami` is still caught only ~10% of the time at 500 ms. Polling cannot close that gap. Event sources can: ETW on Windows, eBPF on Linux.
+- Lever if a lower interval is ever wanted: stop calling `OpenProcess` for processes already seen in the previous snapshot. This is a collector and monitor design change (learning core), not done.
+- No rule depends on the interval: `FileThenProcessRule` uses a 60 s window based on event timestamps.
+
 ---
 
 ## 4. Next steps
