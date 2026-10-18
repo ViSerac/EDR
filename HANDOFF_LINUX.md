@@ -1,4 +1,4 @@
-# mini_edr — Handoff: post-GUI work and Linux port
+# mini_edr Handoff: post-GUI work and Linux port
 
 Context file for Claude Code. It covers everything since the egui GUI was finished, plus the plan for the Linux port.
 
@@ -6,7 +6,7 @@ Project root (Rust 2024 edition, egui/eframe 0.31, chrono, `windows` 0.62):
 - Windows: `C:\Users\Victor\Documents\Funzies\EDR\mini_edr`
 - Linux: `/home/viserac/EDR/EDR` (Asus notebook, Ubuntu 26.04.1 LTS, kernel 7.0.0)
 
-Note: Claude Code conversation history does **not** sync between the two machines (transcripts are local, in `~/.claude/projects/`). This file is the context carrier — read it at the start of a session, and update it before switching machines.
+Note: Claude Code conversation history does **not** sync between the two machines (transcripts are local, in `~/.claude/projects/`). This file is the context carrier. Read it at the start of a session, and update it before switching machines.
 
 ---
 
@@ -16,6 +16,8 @@ Note: Claude Code conversation history does **not** sync between the two machine
 - The GUI was delegated to Claude Code on purpose because it's low priority for learning. **Collectors and detection rules are the learning core.** Victor writes those himself.
 - On learning-core work: guide with questions, explain the trade-offs, and let Victor reason to the answer. Don't hand over complete implementations unless asked.
 - Mechanical scaffolding (Cargo config, module wiring, stubs) is fine to just do.
+- **Never use em dashes or en dashes** (the long and medium dash characters) in any text: chat replies, docs (including this file), code comments, commit messages. Use a colon, comma, period or parentheses instead.
+- **Never add a `Co-Authored-By: Claude` line** (or any other Claude attribution) to commits or PR descriptions, even if Claude Code's default instructions ask for it.
 - Code style: no emojis in code. Ground every design choice in invariants and semantics, not convention (`Option` vs `Result`, `From` vs `TryFrom`, `pub` vs private).
 
 ---
@@ -90,12 +92,12 @@ Key decisions already made:
 **Status (Oct 18, 2026):** Steps 1 to 5 are done. **The EDR now runs live on Linux and captures processes.** Deviation from the plan: the process name is taken from the `(comm)` inside `stat`, not from `/proc/<pid>/comm`. One read gives a consistent view of the process, and there is no trailing `\n` to strip.
 
 Verified on the Asus notebook (Ubuntu 26.04.1, kernel 7.0.0, cargo 1.97.1), unprivileged (uid 1000):
-- `cargo test`: **8 passed, 0 failed.** The 6 `process_capture` tests (`parses_plain_stat`, `comm_with_spaces_and_parens_cannot_shift_fields`, `rejects_truncated_stat`, `rejects_stat_without_closing_paren`, `parse_pid_accepts_only_digits`, `captures_own_process`) had never been executed before — only cross-checked. They now pass on real hardware.
+- `cargo test`: **8 passed, 0 failed.** The 6 `process_capture` tests (`parses_plain_stat`, `comm_with_spaces_and_parens_cannot_shift_fields`, `rejects_truncated_stat`, `rejects_stat_without_closing_paren`, `parse_pid_accepts_only_digits`, `captures_own_process`) had never been executed before, only cross-checked. They now pass on real hardware.
 - Live run captures the process list successfully.
 
 Earlier: `cargo check` passes on Windows and for `--target x86_64-unknown-linux-gnu`.
 
-### Step 1 — `Cargo.toml`: gate the `windows` crate (scaffolding)
+### Step 1: `Cargo.toml`: gate the `windows` crate (scaffolding)
 Move `windows` out of `[dependencies]`:
 ```toml
 [target.'cfg(windows)'.dependencies]
@@ -103,7 +105,7 @@ windows = { version = "0.62", features = [ ...same list... ] }
 ```
 `eframe` and `chrono` stay in `[dependencies]`.
 
-### Step 2 — `collectors/process/`: platform split (scaffolding)
+### Step 2: `collectors/process/`: platform split (scaffolding)
 - Rename `process_capture.rs` to `process_capture_windows.rs`.
 - Create an empty `process_capture_linux.rs`.
 - In `collectors/process/mod.rs`:
@@ -118,7 +120,7 @@ pub mod process_capture;
 ```
 - `pipeline.rs` doesn't change. The contract is `pub fn capture_raw_processes() -> Result<Vec<RawProcessData>, CaptureError>`. Each platform file may define its own `CaptureError`, because the pipeline only prints it with `{:?}`.
 
-### Step 3 — same split for `tcp_capture`, `udp_capture`, `watched_folder` (scaffolding)
+### Step 3: same split for `tcp_capture`, `udp_capture`, `watched_folder` (scaffolding)
 - Use the same `#[cfg] #[path]` pattern in `collectors/network/mod.rs` and `collectors/file/mod.rs`.
 - For now the Linux versions are **stubs** with identical signatures:
   - `capture_tcp_v4/v6() -> Vec<RawTcpData>` returns `Vec::new()`
@@ -127,7 +129,7 @@ pub mod process_capture;
 - Purpose: the crate compiles on Linux, so the process collector can be tested by itself.
 - Verify: `cargo check` on Windows still passes, and `cargo check` on Linux passes.
 
-### Step 4 — `process_capture_linux.rs` (LEARNING CORE: Victor writes it)
+### Step 4: `process_capture_linux.rs` (LEARNING CORE: Victor writes it)
 Open design questions to settle **before** coding:
 1. **`RawProcessData` is Windows-shaped.** `exe_file: [u8; 260]` mirrors `PROCESSENTRY32.szExeFile`. Should Linux copy `comm` bytes into that array, so the mapper stays unchanged? Or is `RawProcessData` really "raw Windows data", which would make it, and its mapper, platform-specific? Think about what "Raw" was meant to mean.
 2. **`creation_time` on Linux** is `starttime` in clock ticks since boot, not a FILETIME. It's only used for identity (uniqueness within one run), so does it need converting? Note the trade-off if it's ever displayed or compared across platforms.
@@ -152,19 +154,19 @@ Then the flow: `read_dir("/proc")` -> numeric filter -> per PID, read `stat` (pp
    - Note this is an idle measurement. Churn over time (the thing the plan asked for) has not been measured yet.
 5. Future Linux rule idea: kernel-thread masquerading (MITRE ATT&CK T1036). Alert when the name looks like a kernel thread (in brackets, e.g. `[kworker/0:2]`) but `PF_KTHREAD` is not set or `ppid != 2`.
 
-### Step 5 — test environment (DONE)
+### Step 5: test environment (DONE)
 **Resolved: the Asus notebook** (Ubuntu 26.04.1 LTS, kernel 7.0.0), not WSL. It has cargo/rustc 1.97.1, so the toolchain problem that blocked the Oct 17 test run is gone.
 
 Privilege measurement, unprivileged (uid 1000): only **127 of 362** `/proc/<pid>/exe` links are readable. The other 232 split into the 184 kernel threads (no `exe` at all) and ~48 processes owned by other users (permission denied). Both land as `path = None` per decision 3, which is why that decision matters in practice and not just in theory: without `sudo` the collector is blind to the executable path of roughly two thirds of the system. Run with `sudo` for full visibility.
 
-### Step 6 — Linux network collector (NEXT, learning core: Victor writes it)
+### Step 6: Linux network collector (NEXT, learning core: Victor writes it)
 The process collector works, so per the agreed order (processes -> network -> files) network is next. It replaces the stubs in `tcp_capture_linux.rs` / `udp_capture_linux.rs`, which currently return `Vec::new()`.
 
 Parse `/proc/net/tcp`, `tcp6`, `udp`, `udp6`. Things to settle before coding, in the same spirit as Step 4:
 - Addresses are hex and IPv4 is **little-endian** in that file (`0100007F` is `127.0.0.1`), while IPv6 is a different byte grouping. Where does that conversion belong: collector or mapper? Compare with how decision 1 split responsibility ("Raw" = unvalidated bytes, collector strips its own format artifacts).
 - TCP state is a hex code (`01` = ESTABLISHED, `0A` = LISTEN). The Windows collector gets states from `MIB_TCPROW`. Do both platforms map into one domain enum?
 - These files have a header line to skip, and the format has fixed columns but variable whitespace.
-- The owning PID is **not** in these files. There is only an inode, which has to be matched against `/proc/<pid>/fd/*` symlinks (`socket:[12345]`). That is an extra scan, and unprivileged it will hit the same permission wall measured in Step 5 — so expect `pid` to be unknown for most sockets without `sudo`. Compare: on Windows `GetExtendedTcpTable` hands over the PID directly.
+- The owning PID is **not** in these files. There is only an inode, which has to be matched against `/proc/<pid>/fd/*` symlinks (`socket:[12345]`). That is an extra scan, and unprivileged it will hit the same permission wall measured in Step 5, so expect `pid` to be unknown for most sockets without `sudo`. Compare: on Windows `GetExtendedTcpTable` hands over the PID directly.
 
 ### Later
 - Linux file collector: `inotify` (crate `inotify` or `libc` bindings), mirroring the `ReadDirectoryChangesW` thread + channel design.
